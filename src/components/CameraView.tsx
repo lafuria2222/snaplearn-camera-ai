@@ -68,7 +68,11 @@ export default function CameraView({ onPhotoCaptured, onAnalyze, onCancel, onFil
     if (!stream) return;
     streamRef.current = stream;
 
-    // Attach stream to video element
+    attachStreamToVideo(stream);
+  };
+
+  // Attach stream to video element with all iOS/Safari compatibility settings
+  const attachStreamToVideo = (stream: MediaStream) => {
     const video = videoRef.current;
     if (video) {
       video.srcObject = stream;
@@ -148,7 +152,7 @@ export default function CameraView({ onPhotoCaptured, onAnalyze, onCancel, onFil
     return () => {
       stopCamera();
     };
-  }, [facingMode]);
+  }, []);
 
   // Capture the photo from the stream using a canvas
   const capturePhoto = () => {
@@ -190,10 +194,85 @@ export default function CameraView({ onPhotoCaptured, onAnalyze, onCancel, onFil
     }
   };
 
-  // Flip facing direction
-  const toggleFacingMode = () => {
+  // Flip facing direction with robust fallback and rollback
+  const toggleFacingMode = async () => {
     const nextMode = facingMode === 'environment' ? 'user' : 'environment';
+    
+    // Stop all tracks from the existing camera stream first
+    stopCamera();
+    
+    setCameraState('opening');
+    setErrorMessage('');
+
+    let stream: MediaStream | null = null;
+    try {
+      // Request the alternate camera with getUserMedia
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: { ideal: nextMode },
+          width: { ideal: 1080 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err: any) {
+      console.warn(`Failed to switch to ${nextMode} camera with full constraints, trying basic fallback...`, err);
+      try {
+        const fallbackConstraints: MediaStreamConstraints = {
+          video: { facingMode: { ideal: nextMode } },
+          audio: false
+        };
+        stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+      } catch (fallbackErr: any) {
+        console.error(`Failed to switch to ${nextMode} camera entirely:`, fallbackErr);
+        
+        // Show clear error message
+        const friendlyLabel = nextMode === 'environment' ? 'rear (back)' : 'front (selfie)';
+        const errorText = `Could not switch to the ${friendlyLabel} camera: ${fallbackErr.message || 'Camera is in use or unavailable.'}`;
+        
+        // Keep or restore the current camera when possible
+        console.log(`Attempting to restore previous camera mode: ${facingMode}`);
+        try {
+          const restoreConstraints: MediaStreamConstraints = {
+            video: {
+              facingMode: { ideal: facingMode },
+              width: { ideal: 1080 },
+              height: { ideal: 1080 }
+            },
+            audio: false
+          };
+          stream = await navigator.mediaDevices.getUserMedia(restoreConstraints);
+        } catch (restoreErr: any) {
+          console.warn(`Failed to restore ${facingMode} camera with full constraints, trying basic restore...`, restoreErr);
+          try {
+            const restoreFallbackConstraints: MediaStreamConstraints = {
+              video: { facingMode: { ideal: facingMode } },
+              audio: false
+            };
+            stream = await navigator.mediaDevices.getUserMedia(restoreFallbackConstraints);
+          } catch (finalRestoreErr: any) {
+            console.error("Failed to restore original camera as well:", finalRestoreErr);
+            setCameraState('denied');
+            setErrorMessage(`${errorText} Additionally, we couldn't restore your original camera preview.`);
+            return;
+          }
+        }
+
+        // If we restored the original camera successfully, notify user but stay on the active camera view
+        if (stream) {
+          streamRef.current = stream;
+          attachStreamToVideo(stream);
+          setErrorMessage(errorText);
+          return;
+        }
+      }
+    }
+
+    if (!stream) return;
+    streamRef.current = stream;
     setFacingMode(nextMode);
+    attachStreamToVideo(stream);
   };
 
   // Clear frozen photo and return to live stream
@@ -260,6 +339,24 @@ export default function CameraView({ onPhotoCaptured, onAnalyze, onCancel, onFil
               {/* Subtle animated scanning laser line */}
               <div className="w-full h-[2px] bg-brand-teal/70 absolute top-0 scanner-line"></div>
             </div>
+
+            {/* Non-fatal floating error banner for switching cameras */}
+            {cameraState === 'active' && errorMessage && (
+              <div className="absolute top-4 left-4 right-4 bg-slate-900/95 backdrop-blur-md text-white px-3 py-2.5 rounded-2xl flex items-start gap-2 z-20 text-xs shadow-md border border-slate-700/50 pointer-events-auto" id="non-fatal-error-banner">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-bold text-slate-100">Camera Switch Alert</p>
+                  <p className="opacity-90 leading-normal font-sans mt-0.5 text-slate-200">{errorMessage}</p>
+                </div>
+                <button 
+                  onClick={() => setErrorMessage('')} 
+                  className="text-slate-400 hover:text-white p-0.5 rounded cursor-pointer"
+                  aria-label="Dismiss message"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -341,12 +438,13 @@ export default function CameraView({ onPhotoCaptured, onAnalyze, onCancel, onFil
             {/* Trigger facing toggler */}
             <button
               onClick={toggleFacingMode}
-              className="flex flex-col items-center gap-1 text-brand-muted hover:text-brand-navy transition-colors justify-center w-12 h-12 rounded-xl active:bg-slate-100 cursor-pointer text-xs font-sans"
+              className="flex flex-col items-center gap-1 text-brand-muted hover:text-brand-navy transition-colors justify-center w-20 h-12 rounded-xl active:bg-slate-100 cursor-pointer text-xs font-sans"
               id="btn-switch-lens"
-              title="Flip camera direction"
+              title="Switch Camera"
+              aria-label="Switch Camera"
             >
               <RefreshCw className="w-5 h-5" />
-              <span className="text-[10px] font-mono leading-none">Flip</span>
+              <span className="text-[9px] font-mono font-bold leading-none uppercase tracking-tight text-center">Switch Camera</span>
             </button>
 
             {/* Giant Snap Trigger */}
