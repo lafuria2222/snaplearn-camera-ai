@@ -13,6 +13,33 @@ async function startServer() {
   // Let's configure JSON limits because base64 data for image uploading can be larger
   app.use(express.json({ limit: "15mb" }));
 
+  // Helper to handle exponential backoff retries for transient 503 errors
+  const generateContentWithRetry = async (aiClient: any, params: any): Promise<any> => {
+    const maxAttempts = 3;
+    let delay = 1000; // Start with 1s delay
+    let lastError: any = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await aiClient.models.generateContent(params);
+      } catch (err: any) {
+        lastError = err;
+        const errorMessage = err.message || "";
+        const errStatus = err.status || (err.error && err.error.code);
+        const is503 = errStatus === 503 || errorMessage.includes("503") || errorMessage.toUpperCase().includes("UNAVAILABLE");
+
+        if (is503 && attempt < maxAttempts) {
+          console.warn(`[Gemini Attempt ${attempt}/${maxAttempts}] Temporary high demand (503), retrying in ${delay}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay = delay * 2 + Math.random() * 500; // Exponential backoff with jitter
+        } else {
+          throw err;
+        }
+      }
+    }
+    throw lastError;
+  };
+
   // API Route for Gemini analysis
   app.post("/api/analyze", async (req: express.Request, res: express.Response) => {
     try {
@@ -52,52 +79,62 @@ async function startServer() {
 - didYouKnow: one interesting, accurate, educational fact about the object.
 - tryThis: one short, engaging prompt encouraging the user to photograph a related object next (e.g. "Try snapping a coffee cup or some sunglasses next!").`;
 
-      // Request structured output from gemini-3.5-flash
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [
-          {
-            inlineData: {
-              data: base64Data,
-              mimeType: finalMimeType,
+      const requestPayload = {
+        inlineData: {
+          data: base64Data,
+          mimeType: finalMimeType,
+        },
+      };
+
+      const requestConfig = {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            whatIsIt: {
+              type: Type.STRING,
+              description: "Short likely identification of the main object."
             },
+            explanation: {
+              type: Type.STRING,
+              description: "Exactly 2 simple sentences explaining what it is."
+            },
+            englishWord: {
+              type: Type.STRING,
+              description: "Name of the object in English."
+            },
+            englishExample: {
+              type: Type.STRING,
+              description: "An example sentence using that name in English."
+            },
+            didYouKnow: {
+              type: Type.STRING,
+              description: "One educational/fun interesting fact about this object."
+            },
+            tryThis: {
+              type: Type.STRING,
+              description: "A friendly prompt recommending they snap a photo of a related item next."
+            }
           },
-          { text: promptText }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              whatIsIt: {
-                type: Type.STRING,
-                description: "Short likely identification of the main object."
-              },
-              explanation: {
-                type: Type.STRING,
-                description: "Exactly 2 simple sentences explaining what it is."
-              },
-              englishWord: {
-                type: Type.STRING,
-                description: "Name of the object in English."
-              },
-              englishExample: {
-                type: Type.STRING,
-                description: "An example sentence using that name in English."
-              },
-              didYouKnow: {
-                type: Type.STRING,
-                description: "One educational/fun interesting fact about this object."
-              },
-              tryThis: {
-                type: Type.STRING,
-                description: "A friendly prompt recommending they snap a photo of a related item next."
-              }
-            },
-            required: ["whatIsIt", "explanation", "englishWord", "englishExample", "didYouKnow", "tryThis"]
-          }
+          required: ["whatIsIt", "explanation", "englishWord", "englishExample", "didYouKnow", "tryThis"]
         }
-      });
+      };
+
+      let response;
+      try {
+        response = await generateContentWithRetry(ai, {
+          model: "gemini-3.5-flash",
+          contents: [requestPayload, { text: promptText }],
+          config: requestConfig
+        });
+      } catch (firstErr: any) {
+        console.warn("Failing over to 'gemini-flash-latest' because gemini-3.5-flash is temporarily unavailable:", firstErr);
+        response = await generateContentWithRetry(ai, {
+          model: "gemini-flash-latest",
+          contents: [requestPayload, { text: promptText }],
+          config: requestConfig
+        });
+      }
 
       const responseText = response.text;
       if (!responseText) {
@@ -108,7 +145,7 @@ async function startServer() {
       return res.json(parsedJSON);
 
     } catch (err: any) {
-      console.error("Gemini server-side error:", err);
+      console.error("Gemini server-side error after failovers:", err);
       return res.status(500).json({ 
         error: err.message || "An error occurred while analyzing the image." 
       });

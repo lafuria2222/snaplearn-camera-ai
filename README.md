@@ -42,8 +42,9 @@ This application has been verified to run seamlessly on mobile Safari (iOS iPhon
 
 We maintain high standards for your data privacy and security:
 - **No API Keys Exposed**: All calls to the Gemini model are proxied through secure server-side Node.js/Express controllers. Application secrets are managed securely via platform environment variables and are never committed to GitHub or exposed to client browsers.
-- **Zero Storage Policy**: Pictures snapped in the application are processed transiently in-memory and are never stored on persistent storage, databases, or logs. Photos are used exclusively to compile the requested learning cards.
-- **Telemetry-Free**: SnapLearn does not require login credentials, emails, location coordinates, or payment systems.
+- **Zero Photo Storage Policy**: Pictures snapped in the application are processed transiently in-memory and are never stored on persistent cloud storage, databases, or log files. Photos are used exclusively to compile the requested learning cards.
+- **Local Text-Only History**: To enhance your educational journey, text content and timestamps of the 5 most recent learning cards are saved locally on your device's browser memory (`localStorage`). Captured photos are **never** saved to this history. You can clear this history anytime using the visible "Clear History" option on the landing screen.
+- **Telemetry-Free**: SnapLearn does not require login credentials, emails, location tracking, or tracking cookies.
 
 ---
 

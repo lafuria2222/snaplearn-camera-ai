@@ -8,13 +8,51 @@ import { Sparkles, RefreshCw, AlertTriangle, ArrowLeft } from 'lucide-react';
 import LandingView from './components/LandingView';
 import CameraView from './components/CameraView';
 import ResultCards from './components/ResultCards';
-import { AnalysisResult, AppState } from './types';
+import { AnalysisResult, AppState, RecentScan } from './types';
+
+const getPlaceholderSvg = (title: string) => {
+  const text = title.length > 25 ? title.substring(0, 22) + '...' : title;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" width="100%" height="100%">
+    <defs>
+      <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#0d9488;stop-opacity:1" />
+        <stop offset="100%" style="stop-color:#0f172a;stop-opacity:1" />
+      </linearGradient>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#grad)" />
+    <path d="M0,45 L400,45 M0,90 L400,90 M0,135 L400,135 M0,180 L400,180" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+    <path d="M80,0 L80,225 M160,0 L160,225 M240,0 L240,225 M320,0 L320,225" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+    
+    <g transform="translate(180, 50) scale(1.6)" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </g>
+    
+    <text x="200" y="155" fill="#f1f5f9" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" letter-spacing="1">
+      SAVED LEARNING CARD
+    </text>
+    <text x="200" y="180" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="12" text-anchor="middle">
+      ${text} (Photo omitted for privacy)
+    </text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>('landing');
   const [currentPhoto, setCurrentPhoto] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [errMessage, setErrMessage] = useState<string | null>(null);
+
+  const [recentScans, setRecentScans] = useState<RecentScan[]>(() => {
+    try {
+      const saved = localStorage.getItem('snap_recent_scans');
+      return saved ? JSON.parse(saved) : [];
+    } catch (err) {
+      console.error("Failed to parse recent scans from localStorage:", err);
+      return [];
+    }
+  });
 
   // Trigger base64 reading for fallback file upload
   const handleFileSelect = (file: File) => {
@@ -68,6 +106,24 @@ export default function App() {
 
       const data: AnalysisResult = await response.json();
       setResult(data);
+
+      // Save only text content and timestamp to local scan history, capping at 5 items
+      const newScan: RecentScan = {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: Date.now(),
+        result: data
+      };
+      setRecentScans((prev) => {
+        const filtered = prev.filter(item => JSON.stringify(item.result) !== JSON.stringify(data));
+        const updated = [newScan, ...filtered].slice(0, 5);
+        try {
+          localStorage.setItem('snap_recent_scans', JSON.stringify(updated));
+        } catch (storageErr) {
+          console.error("Failed to save scans to localStorage:", storageErr);
+        }
+        return updated;
+      });
+
       setAppState('result');
     } catch (err: any) {
       console.error("Analysis failed:", err);
@@ -81,6 +137,22 @@ export default function App() {
     setResult(null);
     setErrMessage(null);
     setAppState('landing');
+  };
+
+  const handleSelectRecent = (scan: RecentScan) => {
+    const placeholder = getPlaceholderSvg(scan.result.whatIsIt);
+    setCurrentPhoto(placeholder);
+    setResult(scan.result);
+    setAppState('result');
+  };
+
+  const handleClearHistory = () => {
+    setRecentScans([]);
+    try {
+      localStorage.removeItem('snap_recent_scans');
+    } catch (err) {
+      console.error("Failed to clear localStorage:", err);
+    }
   };
 
   return (
@@ -106,6 +178,9 @@ export default function App() {
           <LandingView
             onOpenCamera={() => setAppState('camera')}
             onFileSelect={handleFileSelect}
+            recentScans={recentScans}
+            onSelectRecent={handleSelectRecent}
+            onClearHistory={handleClearHistory}
           />
         )}
 

@@ -12,4 +12,10 @@ export interface AnalysisResult {
   tryThis: string;     // one short prompt that encourages the user to photograph another related object
 }
 
+export interface RecentScan {
+  id: string;
+  timestamp: number;
+  result: AnalysisResult;
+}
+
 export type AppState = 'landing' | 'camera' | 'captured' | 'analyzing' | 'result' | 'error';
